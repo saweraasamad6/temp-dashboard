@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Temperature Dashboard</title>
+
+  <!-- Tailwind (for beautiful UI) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body { background: radial-gradient(1200px 600px at 10% 0%, #e0f2fe 0%, transparent 60%),
+                     radial-gradient(1200px 600px at 90% 10%, #dbeafe 0%, transparent 55%),
+                     #f8fafc; }
+  </style>
+</head>
+
+<body class="min-h-screen text-slate-800">
+  <!-- Header -->
+  <header class="max-w-6xl mx-auto px-4 pt-8 pb-4">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight">🌡️ Temperature Monitor</h1>
+        <p class="text-slate-600">ESP8266 → Google Sheets → Vercel Dashboard</p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span id="statusPill" class="px-3 py-1 rounded-full text-sm font-semibold bg-slate-200 text-slate-700">
+          Checking…
+        </span>
+        <button id="refreshBtn"
+          class="px-4 py-2 rounded-xl font-semibold bg-slate-900 text-white hover:bg-slate-800 active:scale-[0.99] transition">
+          Refresh
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="max-w-6xl mx-auto px-4 pb-10">
+    <!-- Cards -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+      <!-- Current Temp -->
+      <div class="bg-white/80 backdrop-blur rounded-2xl shadow p-5 border border-slate-100">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold text-slate-700">Current Temperature</h2>
+          <span class="text-xs px-2 py-1 rounded-full bg-sky-100 text-sky-700 font-semibold">Live</span>
+        </div>
+        <div class="mt-3">
+          <div class="text-5xl font-bold" id="tempC">--</div>
+          <div class="text-slate-600 mt-1" id="tempF">--</div>
+          <div class="text-xs text-slate-500 mt-2">Device: <span id="deviceId">--</span></div>
+        </div>
+      </div>
+
+      <!-- Humidity -->
+      <div class="bg-white/80 backdrop-blur rounded-2xl shadow p-5 border border-slate-100">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold text-slate-700">Humidity</h2>
+          <span class="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-semibold">Optional</span>
+        </div>
+        <div class="mt-3">
+          <div class="text-5xl font-bold" id="humidity">--</div>
+          <div class="text-slate-600 mt-1">Relative Humidity</div>
+          <div class="text-xs text-slate-500 mt-2">Last updated: <span id="lastUpdated">--</span></div>
+        </div>
+      </div>
+
+      <!-- Thresholds -->
+      <div class="bg-white/80 backdrop-blur rounded-2xl shadow p-5 border border-slate-100">
+        <h2 class="font-semibold text-slate-700">Alerts (Local)</h2>
+        <p class="text-sm text-slate-600 mt-1">Set thresholds (saved in your browser)</p>
+
+        <div class="grid grid-cols-2 gap-3 mt-4">
+          <label class="text-sm">
+            <span class="text-slate-600">High (°C)</span>
+            <input id="highLimit" type="number" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring"
+              placeholder="35">
+          </label>
+
+          <label class="text-sm">
+            <span class="text-slate-600">Low (°C)</span>
+            <input id="lowLimit" type="number" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring"
+              placeholder="10">
+          </label>
+        </div>
+
+        <div id="alertBox" class="mt-4 hidden px-3 py-2 rounded-xl text-sm font-semibold"></div>
+
+        <button id="saveLimits"
+          class="mt-4 w-full px-4 py-2 rounded-xl font-semibold bg-sky-600 text-white hover:bg-sky-700 transition">
+          Save Limits
+        </button>
+      </div>
+    </section>
+
+    <!-- Chart -->
+    <section class="bg-white/80 backdrop-blur rounded-2xl shadow p-5 border border-slate-100 mt-4">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-700">Temperature History</h2>
+          <p class="text-sm text-slate-600">Last readings from Google Sheets</p>
+        </div>
+
+        <select id="rangeSelect" class="px-3 py-2 rounded-xl border border-slate-200 bg-white">
+          <option value="20">Last 20</option>
+          <option value="50">Last 50</option>
+          <option value="100">Last 100</option>
+        </select>
+      </div>
+
+      <div class="mt-4">
+        <canvas id="tempChart" height="110"></canvas>
+      </div>
+    </section>
+
+    <!-- Table -->
+    <section class="bg-white/80 backdrop-blur rounded-2xl shadow p-5 border border-slate-100 mt-4">
+      <h2 class="text-lg font-semibold text-slate-700">Raw Logs</h2>
+      <p class="text-sm text-slate-600">Newest on top</p>
+
+      <div class="mt-4 overflow-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-slate-600">
+            <tr class="border-b">
+              <th class="text-left py-2 pr-4">Timestamp</th>
+              <th class="text-left py-2 pr-4">Device</th>
+              <th class="text-left py-2 pr-4">Temp (°C)</th>
+              <th class="text-left py-2 pr-4">Humidity</th>
+            </tr>
+          </thead>
+          <tbody id="logBody" class="text-slate-800"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="text-center text-xs text-slate-500 mt-6">
+      Built for ESP8266 • Hosted on Vercel
+    </footer>
+  </main>
+
+  <script>
+    // ✅ Paste your Apps Script "Web App" URL here
+    const SHEET_API_URL = "PASTE_YOUR_SCRIPT_URL_HERE";
+
+    let chart;
+
+    const statusPill = document.getElementById("statusPill");
+    const refreshBtn = document.getElementById("refreshBtn");
+
+    const tempCEl = document.getElementById("tempC");
+    const tempFEl = document.getElementById("tempF");
+    const humidityEl = document.getElementById("humidity");
+    const lastUpdatedEl = document.getElementById("lastUpdated");
+    const deviceIdEl = document.getElementById("deviceId");
+
+    const logBody = document.getElementById("logBody");
+    const rangeSelect = document.getElementById("rangeSelect");
+
+    const highLimitEl = document.getElementById("highLimit");
+    const lowLimitEl = document.getElementById("lowLimit");
+    const saveLimitsBtn = document.getElementById("saveLimits");
+    const alertBox = document.getElementById("alertBox");
+
+    function cToF(c){ return (c * 9/5) + 32; }
+
+    function setStatus(ok, msg) {
+      statusPill.textContent = msg;
+      statusPill.className = ok
+        ? "px-3 py-1 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-800"
+        : "px-3 py-1 rounded-full text-sm font-semibold bg-rose-100 text-rose-800";
+    }
+
+    function saveLimits() {
+      localStorage.setItem("highLimit", highLimitEl.value || "");
+      localStorage.setItem("lowLimit", lowLimitEl.value || "");
+    }
+
+    function loadLimits() {
+      highLimitEl.value = localStorage.getItem("highLimit") || "";
+      lowLimitEl.value = localStorage.getItem("lowLimit") || "";
+    }
+
+    function showAlert(type, text) {
+      alertBox.classList.remove("hidden");
+      if (type === "high") alertBox.className = "mt-4 px-3 py-2 rounded-xl text-sm font-semibold bg-rose-100 text-rose-800";
+      if (type === "low")  alertBox.className = "mt-4 px-3 py-2 rounded-xl text-sm font-semibold bg-sky-100 text-sky-800";
+      if (type === "ok")   alertBox.className = "mt-4 px-3 py-2 rounded-xl text-sm font-semibold bg-emerald-100 text-emerald-800";
+      alertBox.textContent = text;
+    }
+
+    function checkThresholds(tempC) {
+      const high = parseFloat(highLimitEl.value);
+      const low  = parseFloat(lowLimitEl.value);
+
+      if (!isNaN(high) && tempC > high) return showAlert("high", `High alert: ${tempC.toFixed(1)}°C is above ${high}°C`);
+      if (!isNaN(low) && tempC < low)   return showAlert("low", `Low alert: ${tempC.toFixed(1)}°C is below ${low}°C`);
+      if (!isNaN(high) || !isNaN(low))  return showAlert("ok", "Temperature is within limits ✅");
+
+      alertBox.classList.add("hidden");
+    }
+
+    async function fetchData() {
+      setStatus(true, "Loading…");
+
+      try {
+        const res = await fetch(SHEET_API_URL);
+        const all = await res.json();
+
+        if (!Array.isArray(all) || all.length === 0) {
+          setStatus(false, "No data");
+          return;
+        }
+
+        // newest last in sheet usually; reverse to show newest on top
+        const range = parseInt(rangeSelect.value, 10);
+        const data = all.slice(-range);
+
+        const latest = data[data.length - 1];
+
+        const tempC = parseFloat(latest.temperature);
+        const hum = latest.humidity === "" ? null : parseFloat(latest.humidity);
+
+        tempCEl.textContent = isNaN(tempC) ? "--" : `${tempC.toFixed(1)}°C`;
+        tempFEl.textContent = isNaN(tempC) ? "--" : `${cToF(tempC).toFixed(1)}°F`;
+        humidityEl.textContent = (hum === null || isNaN(hum)) ? "--" : `${hum.toFixed(0)}%`;
+        deviceIdEl.textContent = latest.deviceId || "--";
+
+        const lastTs = latest.timestamp ? new Date(latest.timestamp) : null;
+        lastUpdatedEl.textContent = lastTs ? lastTs.toLocaleString() : "--";
+
+        // status: online if updated recently (within 60 sec)
+        if (lastTs) {
+          const diffSec = (Date.now() - lastTs.getTime()) / 1000;
+          setStatus(diffSec < 60, diffSec < 60 ? "Online" : "Offline");
+        } else {
+          setStatus(true, "Online");
+        }
+
+        checkThresholds(tempC);
+
+        // Update chart
+        const labels = data.map(d => {
+          const t = new Date(d.timestamp);
+          return isNaN(t) ? "" : t.toLocaleTimeString();
+        });
+        const temps = data.map(d => parseFloat(d.temperature));
+
+        renderChart(labels, temps);
+
+        // Update table (newest first)
+        const reversed = [...data].reverse();
+        logBody.innerHTML = reversed.map(row => `
+          <tr class="border-b border-slate-100">
+            <td class="py-2 pr-4 whitespace-nowrap">${row.timestamp ? new Date(row.timestamp).toLocaleString() : ""}</td>
+            <td class="py-2 pr-4">${row.deviceId || ""}</td>
+            <td class="py-2 pr-4 font-semibold">${row.temperature ?? ""}</td>
+            <td class="py-2 pr-4">${row.humidity ?? ""}</td>
+          </tr>
+        `).join("");
+
+      } catch (err) {
+        console.error(err);
+        setStatus(false, "Error");
+      }
+    }
+
+    function renderChart(labels, temps) {
+      const ctx = document.getElementById("tempChart");
+
+      if (chart) chart.destroy();
+
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: "Temperature (°C)",
+            data: temps,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: true }
+          },
+          scales: {
+            y: { beginAtZero: false }
+          }
+        }
+      });
+    }
+
+    refreshBtn.addEventListener("click", fetchData);
+    rangeSelect.addEventListener("change", fetchData);
+
+    saveLimitsBtn.addEventListener("click", () => {
+      saveLimits();
+      fetchData();
+    });
+
+    loadLimits();
+
+    // auto refresh every 10 seconds
+    fetchData();
+    setInterval(fetchData, 10000);
+  </script>
+</body>
+</html>
